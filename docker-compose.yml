@@ -1,0 +1,169 @@
+version: '3.7'
+
+networks:
+  kafka-network:
+    driver: bridge
+
+services:
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: kafka-project-zookeeper
+    hostname: zookeeper
+    networks:
+      - kafka-network
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+
+  # Kafka service for handling messages
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka-project-kafka
+    hostname: kafka
+    depends_on:
+      - zookeeper
+    networks:
+      - kafka-network
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,INTERNAL://kafka:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092,INTERNAL://kafka:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+
+  # Schema registry for handling data formats
+  schema-registry:
+    image: confluentinc/cp-schema-registry:latest
+    container_name: kafka-project-schema-registry
+    hostname: schema-registry
+    depends_on:
+      - kafka
+    networks:
+      - kafka-network
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: "schema-registry"
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka:9092"
+      SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8082"
+    ports:
+      - "8082:8082"
+
+  # KSQLDB server
+  ksqldb-server:
+    image: confluentinc/ksqldb-server:latest
+    container_name: kafka-project-ksqldb-server
+    hostname: ksqldb-server
+    depends_on:
+      - kafka
+      - schema-registry
+    networks:
+      - kafka-network
+    environment:
+      KSQL_BOOTSTRAP_SERVERS: "kafka:9093"
+      KSQL_LISTENERS: "http://0.0.0.0:8088"
+      KSQL_KSQL_SERVICE_ID: "ksql-cluster"
+      KSQL_KSQL_SCHEMA_REGISTRY_URL: "http://schema-registry:8082"
+    ports:
+      - "8088:8088"
+
+  # KSQLDB CLI
+  ksqldb-cli:
+    image: confluentinc/ksqldb-cli:latest
+    container_name: kafka-project-ksqldb-cli
+    hostname: ksqldb-cli
+    depends_on:
+      - ksqldb-server
+    networks:
+      - kafka-network
+    entrypoint: /bin/sh
+    tty: true
+
+  # Flink service to consume messages from Kafka
+  flink:
+    image: flink:latest
+    container_name: flink
+    hostname: flink
+    networks:
+      - kafka-network
+    environment:
+      FLINK_KAFKA_CONNECTOR: "PLAINTEXT://kafka-project-kafka:9092"
+      FLINK_KAFKA_TOPIC: "credit_card_transactions"  # Specify the Kafka topic to consume from
+    ports:
+      - "8081:8081"  # Port for Flink Web UI
+
+  # Flink job manager
+  flink-jobmanager:
+    image: flink:latest
+    container_name: flink-jobmanager
+    hostname: flink-jobmanager
+    networks:
+      - kafka-network
+    ports:
+      - "8081:8081"
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+    command: jobmanager
+
+  # Flink task manager
+  flink-taskmanager:
+    image: flink:latest
+    container_name: flink-taskmanager
+    depends_on:
+      - flink-jobmanager
+    networks:
+      - kafka-network
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+    command: taskmanager
+
+  # Kafka Connect service
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:latest
+    container_name: kafka-project-kafka-connect
+    depends_on:
+      - kafka
+      - schema-registry
+    networks:
+      - kafka-network
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: "kafka:9093"
+      CONNECT_REST_PORT: "8083"
+      CONNECT_GROUP_ID: "kafka-connect-group"
+      CONNECT_CONFIG_STORAGE_TOPIC: "_connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "_connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "_connect-status"
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
+    ports:
+      - "8083:8083"
+
+  # MongoDB for data storage (if required for another part of your project)
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    networks:
+      - kafka-network
+    ports:
+      - "27017:27017"
+
+  # Python MongoDB writer (optional for your project)
+  python-mongodb-writer:  
+    build: .
+    container_name: python-mongodb-writer
+    depends_on:
+      - kafka
+      - mongo
+    networks:
+      - kafka-network
+    volumes:
+      - ./mongodb_writer.py:/app/mongodb_writer.py
+    working_dir: /app
+    command: ["python", "mongodb_writer.py"]

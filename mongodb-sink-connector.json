@@ -1,0 +1,16 @@
+{
+    "name": "mongodb-sink-connector",
+    "config": {
+      "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
+      "tasks.max": "1",
+      "topics": "flagged_transactions",
+      "mongodb.uri": "mongodb://mongo:27017",
+      "database": "fraud_detection",  
+      "mongodb.collection": "flagged_transactions",
+      "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": "false",
+      "mongodb.write.concern": "acknowledged"
+    }
+  }
+  
